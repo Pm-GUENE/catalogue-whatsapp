@@ -754,6 +754,50 @@ def publish_catalog_to_github(config: dict[str, Any]) -> str:
     return github_settings["public_url"]
 
 
+def sync_catalog_from_github(config: dict[str, Any]) -> bool:
+    try:
+        github_settings = github_config(config)
+    except RuntimeError as error:
+        logging.warning("Synchronisation GitHub ignorée: %s", redact_secrets(error))
+        return False
+
+    repo_full_name = f"{github_settings['owner']}/{github_settings['repo_name']}"
+    github_client = Github(github_settings["token"])
+    try:
+        repo = github_client.get_repo(repo_full_name)
+        remote_file = repo.get_contents("meta_catalog.csv", ref=github_settings["branch"])
+        CSV_PATH.write_bytes(remote_file.decoded_content)
+        logging.info("Catalogue synchronisé depuis GitHub.")
+        return True
+    except UnknownObjectException:
+        logging.info("Aucun meta_catalog.csv trouvé sur GitHub.")
+        return False
+    except GithubException as error:
+        logging.error("Erreur de synchronisation GitHub: %s", redact_secrets(error))
+        return False
+    finally:
+        github_client.close()
+
+
+def csv_rows_as_products(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    products_by_id = product_lookup_by_id()
+    products = []
+    for row in rows:
+        details = product_details_for_csv_row(row, products_by_id)
+        products.append(
+            {
+                "id": row.get("id", ""),
+                "title": row.get("title", ""),
+                "description": row.get("description", ""),
+                "brand": row.get("brand", ""),
+                "price": row.get("price", ""),
+                "ram": details["ram"],
+                "storage": details["storage"],
+            }
+        )
+    return products
+
+
 async def send_github_publish_success(message: Any, config: dict[str, Any], label: str) -> bool:
     try:
         url = publish_catalog_to_github(config)
@@ -1059,8 +1103,10 @@ async def receive_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
             config = context.application.bot_data["config"]
             try:
+                sync_catalog_from_github(config)
+                csv_products = [{"id": row.get("id", "")} for row in load_meta_csv_rows()]
                 products = load_products()
-                product_id = build_unique_product_id(draft["parsed_product"], products)
+                product_id = build_unique_product_id(draft["parsed_product"], [*products, *csv_products])
                 image_paths = await download_telegram_photos(draft["photo_files"], product_id, context)
                 image_urls = upload_images(image_paths, config, product_id)
                 product = build_product(draft["parsed_product"], image_urls, product_id)
@@ -1123,6 +1169,8 @@ async def handle_delete_text(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return True
 
     stage = flow.get("stage")
+    if stage == DELETE_STAGE_QUERY:
+        sync_catalog_from_github(context.application.bot_data["config"])
     rows = load_meta_csv_rows()
     if not rows:
         context.user_data.pop("delete_flow", None)
@@ -1226,6 +1274,8 @@ async def handle_price_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return True
 
     stage = flow.get("stage")
+    if stage == PRICE_STAGE_QUERY:
+        sync_catalog_from_github(context.application.bot_data["config"])
     rows = load_meta_csv_rows()
     if not rows:
         context.user_data.pop("price_flow", None)
@@ -1391,6 +1441,8 @@ async def description(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 async def export_catalog(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not CSV_PATH.exists() or CSV_PATH.stat().st_size == 0:
+        sync_catalog_from_github(context.application.bot_data["config"])
     await send_catalog_csv(update.message)
 
 
@@ -1403,7 +1455,10 @@ async def publier(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def stock(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    products = load_products()
+    config = context.application.bot_data["config"]
+    sync_catalog_from_github(config)
+    rows = load_meta_csv_rows()
+    products = csv_rows_as_products(rows)
     if not products:
         await update.message.reply_text("Le catalogue est vide.")
         return
@@ -1435,7 +1490,10 @@ async def stock_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not query.data.startswith("stock_page:"):
         return
 
-    products = load_products()
+    config = context.application.bot_data["config"]
+    sync_catalog_from_github(config)
+    rows = load_meta_csv_rows()
+    products = csv_rows_as_products(rows)
     if not products:
         await query.edit_message_text("Le catalogue est vide.")
         return

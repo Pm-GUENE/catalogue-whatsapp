@@ -60,7 +60,7 @@ Sur Render, utilise [DEPLOY_RENDER.md](C:/Users/pm_guene/Documents/bot/DEPLOY_RE
 
 ## Publication GitHub
 
-Après chaque ajout, suppression ou modification de prix, le bot lit `output/meta_catalog.csv` puis publie le fichier sur GitHub via l'API GitHub avec PyGithub. Il n'utilise pas `git` en ligne de commande.
+Avant chaque ajout, suppression, modification de prix, export ou consultation `/stock`, le bot synchronise `meta_catalog.csv` depuis GitHub quand la configuration GitHub est disponible. Il ajoute ensuite la nouvelle ligne ou applique la modification sur ce CSV synchronisé, puis publie le fichier complet via l'API GitHub avec PyGithub. Il n'utilise pas `git` en ligne de commande.
 
 Le fichier est publié à la racine du dépôt sous le nom:
 
@@ -76,7 +76,7 @@ Commit message:
 Update Meta catalog CSV
 ```
 
-En cas d'échec GitHub, le CSV local est conservé et les données ne sont pas perdues.
+En cas d'échec GitHub, le CSV local est conservé et les données ne sont pas perdues. `/stock` lit le CSV, pas `products.json`, pour rester fiable sur Render Free.
 
 La commande `/publier` force la publication du CSV local sur GitHub.
 
