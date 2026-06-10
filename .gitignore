@@ -1,0 +1,12 @@
+config.json
+.env
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+logs/*.log
+downloads/*
+!downloads/.gitkeep
+output/*
+!output/.gitkeep
